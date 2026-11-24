@@ -354,11 +354,31 @@ static const char *json_esc(char *out, size_t n, const char *in) {
     return out;
 }
 
+/* Whether the slot's layer is on in the running activity and binds this button, so the Off key
+ * can be a device's power while that device's layer is on */
+static int layer_binds_button(uint8_t slot, const char *button_name) {
+    if (!layer_slot_ok(slot)) return 0;
+    char act_id[32] = "-1";
+    get_current_activity(act_id, sizeof(act_id));
+    int binds = 0;
+    pthread_mutex_lock(&g_map_lock);
+    if (s_layer_act[slot][0] && strcmp(act_id, "-1") != 0 && strcmp(s_layer_act[slot], act_id) == 0) {
+        cJSON *map = get_remote_map_unlocked(slot);
+        cJSON *layers = map ? cJSON_GetObjectItemCaseSensitive(map, "layers") : NULL;
+        const char *layer_key = s_layer_name[slot][0] ? s_layer_name[slot] : act_id;
+        cJSON *layer = (layers && cJSON_IsObject(layers)) ? cJSON_GetObjectItemCaseSensitive(layers, layer_key) : NULL;
+        if (layer && cJSON_IsObject(layer) && cJSON_GetObjectItemCaseSensitive(layer, button_name)) binds = 1;
+    }
+    pthread_mutex_unlock(&g_map_lock);
+    return binds;
+}
+
 static void run_remote_button(uint8_t slot, const char *button_name, const char *action_state, const char *dev_id,
                              char *out_dev, size_t out_dev_len, char *out_cmd, size_t out_cmd_len) {
     int is_press = (strcmp(action_state, "release") != 0);
 
-    if (is_press && strcmp(button_name, "PowerOffActivity") == 0) {
+    /* Off stops the activity, unless the layer that is on binds it (a device's own power) */
+    if (is_press && strcmp(button_name, "PowerOffActivity") == 0 && !layer_binds_button(slot, button_name)) {
         printf("[*] RF Dispatch: PowerOffActivity -> Stopping activity\n");
         http_post_local(DAEMON_PORT, "/api/poweroff", "{}");
         return;

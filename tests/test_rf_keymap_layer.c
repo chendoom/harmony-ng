@@ -39,6 +39,7 @@ FILE *__wrap_fopen(const char *path, const char *mode) {
 
 static char s_last_send[256];
 static int s_sends;
+static int s_poweroffs;
 
 int http_post_local(int port, const char *path, const char *body) {
     (void)port;
@@ -46,6 +47,7 @@ int http_post_local(int port, const char *path, const char *body) {
         snprintf(s_last_send, sizeof(s_last_send), "%s", body);
         s_sends++;
     }
+    if (path && strcmp(path, "/api/poweroff") == 0) s_poweroffs++;
     return 200;
 }
 
@@ -110,7 +112,8 @@ int main(void) {
         "},\"layers\":{"
         "\"1\":{\"DirectionUp\":" BTN("3", "DirectionUp") ",\"Select\":" BTN("3", "Select") ","
                "\"Back\":" BTN("3", "Return") "},"
-        "\"amp\":{\"DirectionUp\":" BTN("5", "DirectionUp") ",\"Dvr\":{}}"
+        "\"amp\":{\"DirectionUp\":" BTN("5", "DirectionUp") ",\"Dvr\":{},"
+                 "\"PowerOffActivity\":" BTN("5", "PowerToggle") "}"
         "},\"devices\":{}}");
     write_file(s_act_path, "1\n");
     rf_keymap_invalidate_map(2);
@@ -143,8 +146,24 @@ int main(void) {
     check("the amp's layer: its arrow", "DirectionUp", "press", "5", "DirectionUp");
     check("the amp's layer: a key bound to nothing sends nothing", "Dvr", "press", NULL, NULL);
     check("the amp's layer: a key it lacks is the activity's", "Select", "press", "2", "Select");
+    /* Off is the amp's power while its layer binds it, and stops the activity otherwise */
+    s_poweroffs = 0;
+    check("the amp's layer: Off is the amp's power", "PowerOffActivity", "press", "5", "PowerToggle");
+    check("and its release is that key's", "PowerOffActivity", "release", "5", "PowerToggle");
+    printf("[%s] the activity was not stopped (poweroffs=%d)\n", s_poweroffs == 0 ? "+" : "-", s_poweroffs);
+    if (s_poweroffs != 0) failures++;
+    expect_layer_named("and the amp's layer is still on", 1, "1", "amp");
     check("Guide with the amp's layer on sends the off command", "Guide", "press", "3", "Blue");
     expect_layer("and every layer is off", 0, "");
+    check("layer off: Off sends no key", "PowerOffActivity", "press", NULL, NULL);
+    printf("[%s] and stops the activity (poweroffs=%d)\n", s_poweroffs == 1 ? "+" : "-", s_poweroffs);
+    if (s_poweroffs != 1) failures++;
+    check("Guide's own layer does not bind Off", "Guide", "press", "3", "Green");
+    check("so Off sends no key there", "PowerOffActivity", "press", NULL, NULL);
+    printf("[%s] and stops the activity (poweroffs=%d)\n", s_poweroffs == 2 ? "+" : "-", s_poweroffs);
+    if (s_poweroffs != 2) failures++;
+    check("Guide off again", "Guide", "press", "3", "Blue");
+    expect_layer("every layer is off", 0, "");
     check("Guide again turns the activity's own layer on", "Guide", "press", "3", "Green");
     expect_layer("the activity's own layer", 1, "1");
     check("its arrow is the menu layer's", "DirectionUp", "press", "3", "DirectionUp");
