@@ -477,21 +477,26 @@ void *api_server_worker(void *arg) {
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"log_level\":%d,\"ok\":true}", g_log_level);
                 write(cli, res, rlen);
             } else if (route_is(buf, "GET /api/rf/layer") || route_is(buf, "POST /api/rf/layer")) {
-                /* The key layers (rf_keymap.h): POST ?slot=1|2&on=0|1 turns one off, or on in the
-                 * running activity, without sending anything; both answer every slot's state */
-                char sv[8], ov[8];
+                /* The key layers (rf_keymap.h): POST ?slot=1|2&on=0|1[&name=] turns one off, or on in
+                 * the running activity (the activity's own, or the named one), without sending
+                 * anything; both answer every slot's state, a bad slot or name 400 */
+                char sv[8], ov[8], nv[32] = "";
+                int bad = 0;
                 if (route_is(buf, "POST /api/rf/layer") && query_param(buf, "slot", sv, sizeof(sv)) &&
                     query_param(buf, "on", ov, sizeof(ov))) {
-                    rf_keymap_layer_set((uint8_t)atoi(sv), atoi(ov) != 0);
+                    query_param(buf, "name", nv, sizeof(nv));
+                    bad = rf_keymap_layer_set((uint8_t)atoi(sv), atoi(ov) != 0, nv) != 0;
                 }
-                char a1[32], a2[32];
-                int on1 = rf_keymap_layer_active(1, a1, sizeof(a1));
-                int on2 = rf_keymap_layer_active(2, a2, sizeof(a2));
-                char res[320];
+                char a1[32], a2[32], n1[24], n2[24];
+                int on1 = rf_keymap_layer_active(1, a1, sizeof(a1), n1, sizeof(n1));
+                int on2 = rf_keymap_layer_active(2, a2, sizeof(a2), n2, sizeof(n2));
+                char res[400];
                 int rlen = snprintf(res, sizeof(res),
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
-                    "{\"ok\":true,\"slots\":[{\"slot\":1,\"on\":%s,\"activity\":\"%s\"},{\"slot\":2,\"on\":%s,\"activity\":\"%s\"}]}",
-                    on1 ? "true" : "false", a1, on2 ? "true" : "false", a2);
+                    "HTTP/1.1 %s\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+                    "{\"ok\":%s,\"slots\":[{\"slot\":1,\"on\":%s,\"activity\":\"%s\",\"name\":\"%s\"},"
+                    "{\"slot\":2,\"on\":%s,\"activity\":\"%s\",\"name\":\"%s\"}]}",
+                    bad ? "400 Bad Request" : "200 OK", bad ? "false" : "true",
+                    on1 ? "true" : "false", a1, n1, on2 ? "true" : "false", a2, n2);
                 write(cli, res, rlen);
             } else if (strstr(buf, "GET /api/rf/send?hex=") == buf) {
                 if (is_ota_busy()) {

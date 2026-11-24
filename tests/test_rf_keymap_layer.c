@@ -75,12 +75,16 @@ static void check(const char *what, const char *key, const char *action, const c
     if (!ok) failures++;
 }
 
-static void expect_layer(const char *what, int want_on, const char *want_act) {
-    char act[32];
-    int on = rf_keymap_layer_active(2, act, sizeof(act));
-    int ok = (on == want_on) && strcmp(act, want_act) == 0;
-    printf("[%s] %s (on=%d activity='%s')\n", ok ? "+" : "-", what, on, act);
+static void expect_layer_named(const char *what, int want_on, const char *want_act, const char *want_name) {
+    char act[32], name[24];
+    int on = rf_keymap_layer_active(2, act, sizeof(act), name, sizeof(name));
+    int ok = (on == want_on) && strcmp(act, want_act) == 0 && strcmp(name, want_name) == 0;
+    printf("[%s] %s (on=%d activity='%s' name='%s')\n", ok ? "+" : "-", what, on, act, name);
     if (!ok) failures++;
+}
+
+static void expect_layer(const char *what, int want_on, const char *want_act) {
+    expect_layer_named(what, want_on, want_act, "");
 }
 
 #define BTN(dev, cmd) "{\"type\":\"command\",\"action\":\"device_cmd\",\"deviceId\":\"" dev "\",\"command\":\"" cmd "\"}"
@@ -105,7 +109,8 @@ int main(void) {
         "\"2\":{\"DirectionUp\":" BTN("4", "Up") "}"
         "},\"layers\":{"
         "\"1\":{\"DirectionUp\":" BTN("3", "DirectionUp") ",\"Select\":" BTN("3", "Select") ","
-               "\"Back\":" BTN("3", "Return") "}"
+               "\"Back\":" BTN("3", "Return") "},"
+        "\"amp\":{\"DirectionUp\":" BTN("5", "DirectionUp") ",\"Dvr\":{}}"
         "},\"devices\":{}}");
     write_file(s_act_path, "1\n");
     rf_keymap_invalidate_map(2);
@@ -131,16 +136,36 @@ int main(void) {
     write_file(s_act_path, "1\n");
     check("back in activity 1 the layer stays off", "DirectionUp", "press", "2", "Up");
 
+    /* A named layer (a device's menus): its keys, a key it binds to nothing sends nothing, and
+       Guide turns it off with the off command */
+    rf_keymap_layer_set(2, 1, "amp");
+    expect_layer_named("API on: the amp's layer", 1, "1", "amp");
+    check("the amp's layer: its arrow", "DirectionUp", "press", "5", "DirectionUp");
+    check("the amp's layer: a key bound to nothing sends nothing", "Dvr", "press", NULL, NULL);
+    check("the amp's layer: a key it lacks is the activity's", "Select", "press", "2", "Select");
+    check("Guide with the amp's layer on sends the off command", "Guide", "press", "3", "Blue");
+    expect_layer("and every layer is off", 0, "");
+    check("Guide again turns the activity's own layer on", "Guide", "press", "3", "Green");
+    expect_layer("the activity's own layer", 1, "1");
+    check("its arrow is the menu layer's", "DirectionUp", "press", "3", "DirectionUp");
+    rf_keymap_layer_set(2, 1, "amp");
+    check("the API switches it to the amp's layer", "DirectionUp", "press", "5", "DirectionUp");
+    int bad = rf_keymap_layer_set(2, 1, "no spaces");
+    printf("[%s] a bad name is refused (rc=%d)\n", bad == -1 ? "+" : "-", bad);
+    if (bad != -1) failures++;
+    expect_layer_named("and the layer is as it was", 1, "1", "amp");
+    rf_keymap_layer_set(2, 0, NULL);
+
     /* The API sets it without sending, and only while an activity runs */
-    rf_keymap_layer_set(2, 1);
+    rf_keymap_layer_set(2, 1, NULL);
     expect_layer("API on in activity 1", 1, "1");
     check("API on: the arrow is the layer's", "DirectionUp", "press", "3", "DirectionUp");
-    rf_keymap_layer_set(2, 0);
+    rf_keymap_layer_set(2, 0, NULL);
     expect_layer("API off", 0, "");
     write_file(s_act_path, "-1\n");
-    rf_keymap_layer_set(2, 1);
+    rf_keymap_layer_set(2, 1, NULL);
     expect_layer("API on with no activity running stays off", 0, "");
-    rf_keymap_layer_set(3, 1);
+    rf_keymap_layer_set(3, 1, NULL);
     expect_layer("an unknown slot changes nothing", 0, "");
 
     unlink(s_map_path);
