@@ -39,6 +39,14 @@ void rf_keymap_invalidate_devices_cache(void);
 void rf_keymap_invalidate_activities_cache(void);
 void rf_keymap_invalidate_map(uint8_t slot);
 
+/* The key layer of a remote slot (1 or 2), RAM only: while it is on, the keys of the map's
+ * "layers" -> <activity id> object come before that activity's own. It belongs to the activity
+ * it was turned on in, and is off once another activity, or none, runs. A key bound as
+ * {"action": "layer_toggle", "on": {"deviceId", "command"}, "off": {"deviceId", "command"}}
+ * turns it on and sends "on", or off and sends "off". active: 1 on (act_out = its activity). */
+int rf_keymap_layer_active(uint8_t slot, char *act_out, size_t act_len);
+void rf_keymap_layer_set(uint8_t slot, int on);
+
 #ifdef __cplusplus
 }
 #endif

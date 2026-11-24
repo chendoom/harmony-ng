@@ -22,6 +22,14 @@ static pthread_mutex_t g_rf_devices_lock = PTHREAD_MUTEX_INITIALIZER;
 static cJSON *g_rf_activities_cache = NULL;
 static pthread_mutex_t g_rf_activities_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Key layer per slot (rf_keymap.h), under g_map_lock: the activity it was turned on in, or ""
+ * when off, and the command a layer_toggle press sent, which its release sends too */
+static char s_layer_act[3][32];
+static char s_layer_held_dev[3][64];
+static char s_layer_held_cmd[3][64];
+
+static int layer_slot_ok(uint8_t slot) { return slot >= 1 && slot <= 2; }
+
 void rf_keymap_invalidate_devices_cache(void) {
     pthread_mutex_lock(&g_rf_devices_lock);
     if (g_rf_devices_cache) {
@@ -237,6 +245,32 @@ cJSON *get_remote_direct_map(int slot) {
  * the first activity in the file is an arbitrary pick, and its command would go to a device the
  * current activity may not use (as agreed in #220). In a map without an "activities" object the
  * activities are the top-level objects next to "devices". */
+int rf_keymap_layer_active(uint8_t slot, char *act_out, size_t act_len) {
+    char act_id[32] = "-1";
+    get_current_activity(act_id, sizeof(act_id));
+    int on = 0;
+    pthread_mutex_lock(&g_map_lock);
+    if (layer_slot_ok(slot) && s_layer_act[slot][0]) {
+        if (strcmp(s_layer_act[slot], act_id) == 0) on = 1;
+        else s_layer_act[slot][0] = '\0';
+    }
+    if (act_out && act_len) snprintf(act_out, act_len, "%s", on ? s_layer_act[slot] : "");
+    pthread_mutex_unlock(&g_map_lock);
+    return on;
+}
+
+void rf_keymap_layer_set(uint8_t slot, int on) {
+    char act_id[32] = "-1";
+    get_current_activity(act_id, sizeof(act_id));
+    pthread_mutex_lock(&g_map_lock);
+    if (layer_slot_ok(slot)) {
+        if (on && act_id[0] && strcmp(act_id, "-1") != 0) snprintf(s_layer_act[slot], sizeof(s_layer_act[slot]), "%s", act_id);
+        else s_layer_act[slot][0] = '\0';
+        printf("[*] RF key layer of slot %u %s (API)\n", slot, s_layer_act[slot][0] ? "on" : "off");
+    }
+    pthread_mutex_unlock(&g_map_lock);
+}
+
 static cJSON *fallback_activity_obj(cJSON *acts, cJSON *map) {
     cJSON *o = cJSON_GetObjectItemCaseSensitive(acts, "-1");
     if (!o) o = cJSON_GetObjectItemCaseSensitive(acts, "default");
@@ -403,7 +437,19 @@ static void run_remote_button(uint8_t slot, const char *button_name, const char 
     if (!acts || !cJSON_IsObject(acts)) acts = map;
 
     cJSON *btn_cfg = NULL;
-    if (act_id[0] && strcmp(act_id, "-1") != 0) {
+    int layer_on = 0;
+    if (layer_slot_ok(slot) && s_layer_act[slot][0]) {
+        if (act_id[0] && strcmp(act_id, "-1") != 0 && strcmp(s_layer_act[slot], act_id) == 0) {
+            layer_on = 1;
+            cJSON *layers = cJSON_GetObjectItemCaseSensitive(map, "layers");
+            cJSON *layer = (layers && cJSON_IsObject(layers)) ? cJSON_GetObjectItemCaseSensitive(layers, act_id) : NULL;
+            if (layer && cJSON_IsObject(layer)) btn_cfg = cJSON_GetObjectItemCaseSensitive(layer, button_name);
+        } else {
+            printf("[*] RF key layer of slot %u off: activity %s runs\n", slot, act_id);
+            s_layer_act[slot][0] = '\0';
+        }
+    }
+    if (!btn_cfg && act_id[0] && strcmp(act_id, "-1") != 0) {
         cJSON *act_obj = cJSON_GetObjectItemCaseSensitive(acts, act_id);
         if (act_obj && cJSON_IsObject(act_obj)) {
             btn_cfg = cJSON_GetObjectItemCaseSensitive(act_obj, button_name);
@@ -420,7 +466,29 @@ static void run_remote_button(uint8_t slot, const char *button_name, const char 
         cJSON *j_act = cJSON_GetObjectItemCaseSensitive(btn_cfg, "action");
         if (!j_act) j_act = cJSON_GetObjectItemCaseSensitive(btn_cfg, "type");
         if (j_act && cJSON_IsString(j_act)) strncpy(act_type_buf, j_act->valuestring, sizeof(act_type_buf) - 1);
+    }
 
+    if (btn_cfg && cJSON_IsObject(btn_cfg) && strcmp(act_type_buf, "layer_toggle") == 0) {
+        /* The press turns the layer over and sends its "on" or "off" command; the release sends
+         * the release of that same command */
+        if (is_press && layer_slot_ok(slot)) {
+            cJSON *send = cJSON_GetObjectItemCaseSensitive(btn_cfg, layer_on ? "off" : "on");
+            cJSON *j_sdev = (send && cJSON_IsObject(send)) ? cJSON_GetObjectItemCaseSensitive(send, "deviceId") : NULL;
+            cJSON *j_scmd = (send && cJSON_IsObject(send)) ? cJSON_GetObjectItemCaseSensitive(send, "command") : NULL;
+            snprintf(s_layer_held_dev[slot], sizeof(s_layer_held_dev[slot]), "%s",
+                     (j_sdev && cJSON_IsString(j_sdev)) ? j_sdev->valuestring : "");
+            snprintf(s_layer_held_cmd[slot], sizeof(s_layer_held_cmd[slot]), "%s",
+                     (j_scmd && cJSON_IsString(j_scmd)) ? j_scmd->valuestring : "");
+            if (layer_on) s_layer_act[slot][0] = '\0';
+            else if (act_id[0] && strcmp(act_id, "-1") != 0) snprintf(s_layer_act[slot], sizeof(s_layer_act[slot]), "%s", act_id);
+            printf("[*] RF key layer of slot %u %s in activity %s\n", slot, s_layer_act[slot][0] ? "on" : "off", act_id);
+        }
+        if (layer_slot_ok(slot)) {
+            snprintf(dev_id_buf, sizeof(dev_id_buf), "%s", s_layer_held_dev[slot]);
+            snprintf(cmd_buf, sizeof(cmd_buf), "%s", s_layer_held_cmd[slot]);
+        }
+        snprintf(act_type_buf, sizeof(act_type_buf), "device_cmd");
+    } else if (btn_cfg && cJSON_IsObject(btn_cfg)) {
         cJSON *j_dev = cJSON_GetObjectItemCaseSensitive(btn_cfg, "deviceId");
         if (!j_dev) j_dev = cJSON_GetObjectItemCaseSensitive(btn_cfg, "targetDevice");
         if (j_dev && cJSON_IsString(j_dev)) strncpy(dev_id_buf, j_dev->valuestring, sizeof(dev_id_buf) - 1);
@@ -433,7 +501,7 @@ static void run_remote_button(uint8_t slot, const char *button_name, const char 
         if (j_target_act && cJSON_IsString(j_target_act)) {
             strncpy(target_act_id_buf, j_target_act->valuestring, sizeof(target_act_id_buf) - 1);
         } else if (dev_id_buf[0]) {
-            strncpy(target_act_id_buf, dev_id_buf, sizeof(target_act_id_buf) - 1);
+            snprintf(target_act_id_buf, sizeof(target_act_id_buf), "%s", dev_id_buf);
         }
     }
     pthread_mutex_unlock(&g_map_lock);

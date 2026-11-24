@@ -476,6 +476,23 @@ void *api_server_worker(void *arg) {
                 int rlen = snprintf(res, sizeof(res),
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"log_level\":%d,\"ok\":true}", g_log_level);
                 write(cli, res, rlen);
+            } else if (route_is(buf, "GET /api/rf/layer") || route_is(buf, "POST /api/rf/layer")) {
+                /* The key layers (rf_keymap.h): POST ?slot=1|2&on=0|1 turns one off, or on in the
+                 * running activity, without sending anything; both answer every slot's state */
+                char sv[8], ov[8];
+                if (route_is(buf, "POST /api/rf/layer") && query_param(buf, "slot", sv, sizeof(sv)) &&
+                    query_param(buf, "on", ov, sizeof(ov))) {
+                    rf_keymap_layer_set((uint8_t)atoi(sv), atoi(ov) != 0);
+                }
+                char a1[32], a2[32];
+                int on1 = rf_keymap_layer_active(1, a1, sizeof(a1));
+                int on2 = rf_keymap_layer_active(2, a2, sizeof(a2));
+                char res[320];
+                int rlen = snprintf(res, sizeof(res),
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+                    "{\"ok\":true,\"slots\":[{\"slot\":1,\"on\":%s,\"activity\":\"%s\"},{\"slot\":2,\"on\":%s,\"activity\":\"%s\"}]}",
+                    on1 ? "true" : "false", a1, on2 ? "true" : "false", a2);
+                write(cli, res, rlen);
             } else if (strstr(buf, "GET /api/rf/send?hex=") == buf) {
                 if (is_ota_busy()) {
                     const char *res = "HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"RF OTA in progress\",\"ok\":false}";
