@@ -135,6 +135,7 @@ static void test_held_key(void) {
     usleep(100 * 1000); /* past the same-button filter of the checks that follow */
 }
 
+void ir_encode_rc5_next_press(void) {} /* RC5 toggle per press (ir_encoder.c) */
 void ir_free_encoded(uint8_t *bin) {
     if (bin) free(bin);
 }

@@ -61,6 +61,12 @@ int ir_encode_harmony_keycode(const char *keycode, uint8_t min_repeats,
 
 void ir_free_encoded(uint8_t *buf);
 
+/* A new press of an RC5 "Toggle" code: flips the toggle bit the next encode sends, so a
+ * receiver tells it from the key held before. The frames of one press keep one toggle. */
+void ir_encode_rc5_next_press(void);
+/* The toggle bit (0 or 1) the next RC5 "Toggle" code is encoded with */
+int ir_encode_rc5_toggle(void);
+
 #ifdef __cplusplus
 }
 #endif

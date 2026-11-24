@@ -387,6 +387,18 @@ int ir_parse_harmony_raw(const char *code, uint32_t *carrier_hz, int32_t *timing
     return (int)count;
 }
 
+/* The RC5 toggle bit the next "Toggle" code is sent with: 0 (as stored) until the first
+ * press flips it. Real RC5 remotes flip it at every press and keep it while a key is held. */
+static int s_rc5_toggle = 0;
+
+void ir_encode_rc5_next_press(void) {
+    s_rc5_toggle ^= 1;
+}
+
+int ir_encode_rc5_toggle(void) {
+    return s_rc5_toggle;
+}
+
 int ir_encode_harmony_keycode(const char *keycode, uint8_t min_repeats,
                              uint8_t **out_buf, size_t *out_len) {
     if (!keycode || !keycode[0] || !out_buf || !out_len) return -1;
@@ -715,11 +727,32 @@ int ir_encode_harmony_keycode(const char *keycode, uint8_t min_repeats,
     } else if (strstr(proto, "RC5") || strcasecmp(proto, "RC5") == 0) {
         carrier_hz = 36000;
         unsigned long val = strtoul(hex, NULL, 16);
+        /* A "Toggle" code's toggle bit (bit 11 of the 13) as this press has it: a receiver
+         * tells a new press from a held key by it (ir_encode_rc5_next_press) */
+        if (strstr(proto, "Toggle") && s_rc5_toggle) val ^= 0x0800;
         /* Harmony "RC5 13 Bit" codes omit the first start bit, which is always 1;
          * its first half is idle line, so the frame begins with a mark */
         timings_add_biphase(timings, &timing_count, val | 0x2000, 14, 889);
         /* Pad the frame to the 113.8 ms RC-5 repeat period */
         timings_pad_to(timings, &timing_count, 0, 113792);
+        /* The code's count (":3") is how many frames a press sends, as the stock Hub sent
+         * them: an Arcam in its Low Power standby missed a single frame. The press sends
+         * that many, one period apart; a held key repeats one. The frame starts with a mark
+         * and ends with the padding's space, so the copies join without merging. */
+        size_t one_frame = timing_count;
+        int frames = parsed_repeats < 1 ? 1 : parsed_repeats;
+        uint32_t repeat[2 * 14 + 2];  /* one frame: 14 bits in halves and the padding */
+        if (frames > 1 && one_frame % 2 == 0 && one_frame <= sizeof(repeat) / sizeof(repeat[0]) &&
+            one_frame * (size_t)frames <= 1000) {
+            memcpy(repeat, timings, one_frame * sizeof(uint32_t));
+            for (int f = 1; f < frames; f++) {
+                memcpy(&timings[timing_count], repeat, one_frame * sizeof(uint32_t));
+                timing_count += one_frame;
+            }
+            /* its own buffer: a repeat at the start's address is taken for the whole start */
+            return ir_encode_sequences(carrier_hz, timings, timing_count, repeat, one_frame, parsed_repeats,
+                                       out_buf, out_len);
+        }
     } else if (is_nec_family(proto)) {
         /* Standard NEC 32-bit (also raw hex keycodes without a G: protocol) */
         carrier_hz = 38000;

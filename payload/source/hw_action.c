@@ -306,6 +306,9 @@ static int ir_send_keycode(const char *keycode, uint8_t ports, uint8_t repeats, 
 
     uint8_t *bin = NULL;
     size_t bin_len = 0;
+    /* each press or tap of an RC5 "Toggle" code is a new key to the receiver; a held key's
+     * repeats are this one encode's frames, so they keep its toggle */
+    if (strstr(keycode, "Toggle")) ir_encode_rc5_next_press();
     int rc = ir_encode_harmony_keycode(keycode, repeats ? repeats : 3, &bin, &bin_len);
     if (rc != 0 || !bin || bin_len == 0) {
         return -2;

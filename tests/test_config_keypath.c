@@ -61,6 +61,7 @@ int ir_i2s_blast_blob_part(const uint8_t *blob, size_t blob_len, int part, uint8
 int ir_i2s_blast_blob_part(const uint8_t *blob, size_t blob_len, int part, uint8_t port_mask) { (void)blob; (void)blob_len; (void)part; (void)port_mask; return -1; }
 void ir_i2s_tx_hold(int on);
 void ir_i2s_tx_hold(int on) { (void)on; }
+void ir_encode_rc5_next_press(void) {} /* RC5 toggle per press (ir_encoder.c) */
 void ir_free_encoded(uint8_t *bin) { free(bin); }
 
 /* ---- cJSON allocation counter ---- */

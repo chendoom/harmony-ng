@@ -135,10 +135,24 @@ static void check_rc5ex(const char *keycode, unsigned long address, unsigned lon
 }
 
 int main(void) {
-    /* Marantz receiver: address 16, command 13 (Mute) / 16 (Volume up) / 80 (S2 = 0) */
-    check_frames("G:Philips RC5 13 Bit Toggle:()(0x140D)():3", 36000, &RC5, 13, 0x140D, 1);
-    check_frames("G:Philips RC5 13 Bit Toggle:()(0x1410)():3", 36000, &RC5, 13, 0x1410, 1);
-    check_frames("G:Philips RC5 13 Bit Toggle:()(0x0450)():3", 36000, &RC5, 13, 0x0450, 1);
+    /* Marantz receiver: address 16, command 13 (Mute) / 16 (Volume up) / 80 (S2 = 0). A press
+     * sends the code's count of frames (":3"), as the stock Hub did; a held key repeats one */
+    check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x140D)():3", 36000, &RC5, 13, 0x140D, 3);
+    check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x1410)():3", 36000, &RC5, 13, 0x1410, 3);
+    check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x0450)():3", 36000, &RC5, 13, 0x0450, 3);
+    /* A count of 1 is a single frame */
+    check_frames("G:Philips RC5 13 Bit Toggle:()(0x140D)():1", 36000, &RC5, 13, 0x140D, 1);
+
+    /* The toggle bit (bit 11) flips at each new press of a "Toggle" code and stays for its frames:
+     * Arcam receiver, address 16, command 123 (PowerOn, S2 = 0) */
+    assert(ir_encode_rc5_toggle() == 0);
+    check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x043B)():3", 36000, &RC5, 13, 0x043B, 3);
+    ir_encode_rc5_next_press();
+    assert(ir_encode_rc5_toggle() == 1);
+    check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x043B)():3", 36000, &RC5, 13, 0x043B ^ 0x0800, 3);
+    ir_encode_rc5_next_press();
+    check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x043B)():3", 36000, &RC5, 13, 0x043B, 3);
+    printf("ok RC5 toggle per press\n");
 
     /* Logitech port masks to emitter bits: front blaster, jack 1, jack 2, all, none */
     assert(ir_i2s_ports_to_emitters(1) == IR_I2S_EMITTER_BLASTER);
