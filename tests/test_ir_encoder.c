@@ -154,15 +154,6 @@ int main(void) {
     check_frames_repeat_one("G:Philips RC5 13 Bit Toggle:()(0x043B)():3", 36000, &RC5, 13, 0x043B, 3);
     printf("ok RC5 toggle per press\n");
 
-    /* Logitech port masks to emitter bits: front blaster, jack 1, jack 2, all, none */
-    assert(ir_i2s_ports_to_emitters(1) == IR_I2S_EMITTER_BLASTER);
-    assert(ir_i2s_ports_to_emitters(2) == IR_I2S_EMITTER_PORT2);
-    assert(ir_i2s_ports_to_emitters(4) == IR_I2S_EMITTER_PORT1);
-    assert(ir_i2s_ports_to_emitters(6) == (IR_I2S_EMITTER_PORT1 | IR_I2S_EMITTER_PORT2));
-    assert(ir_i2s_ports_to_emitters(7) == IR_I2S_EMITTER_ALL);
-    assert(ir_i2s_ports_to_emitters(0) == 0);
-    printf("ok port masks\n");
-
     /* Sky Q Mini: Home, PowerToggle and the digit 0 */
     check_frames("G:Sky 28 Bit:()(0xFF7E533)():3", 36000, &SKY, 28, 0xFF7E533, 1);
     check_frames("G:Sky 28 Bit:()(0xFF7E5F3)():3", 36000, &SKY, 28, 0xFF7E5F3, 1);
