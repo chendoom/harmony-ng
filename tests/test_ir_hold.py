@@ -26,7 +26,9 @@ Checks:
     each, as before; a tap while a key is held ends it, and holds for a key that does not play
     send nothing
  7. hold_secs of the send_command action (WebSocket, MQTT) holds the command for that long
- 8. a code without a repeat sequence repeats its whole frame at the frame's own length; an NEC
+ 8. a code without a repeat sequence sends its frame once at the press and repeats it, at the
+    frame's own length, only from the first hold on (a press released before any hold is one
+    frame: a receiver without a toggle bit takes a second frame for a second press); an NEC
     type code ("Toshiba 32 Bit") repeats its 108 ms repeat code; a Sony code, three frames at
     the press, repeats single frames
  9. capture mode on: light read during the whole hold gives no ir_received event; the next
@@ -395,10 +397,26 @@ def test_repeat_formats(hub, tx, keys):
     check(len(fr) >= 6 and all(f.code() == WHOLE_CODE for f in fr),
           "no repeat sequence: every frame is the whole code (%d frames, %s)"
           % (len(fr), sorted(set("%08X" % f.code() if f.code() is not None else "?" for f in fr))))
-    per = [(b.start - a.start) / 1000.0 for a, b in zip(fr, fr[1:])]
+    per = [(b.start - a.start) / 1000.0 for a, b in zip(fr[1:], fr[2:])]
     check(per and WHOLE_MS - 1.5 <= median(per) <= WHOLE_MS + 10 and abs(fr[0].dur / 1000.0 - WHOLE_MS) <= 1.5,
           "repeated at the frame's own length %.1f ms: stream %.1f ms, median start-to-start %.1f ms"
           % (WHOLE_MS, fr[0].dur / 1000.0 if fr else 0, median(per)))
+    second = (fr[1].start - fr[0].start) / 1000.0 if len(fr) > 1 else 0
+    check(300 - MARGIN_MS <= second <= 300 + MARGIN_MS,
+          "the frame of the press, then nothing until the first hold (second frame %.0f ms after the first)" % second)
+
+    # A press as long as two or three frames, released before the remote's first hold: one frame
+    for held_ms in (200, 340):
+        tx.mark()
+        keys.play([(0, "press", "Whole", "9"), (held_ms, "release", "Whole", "9")])
+        fr = tx.wait_quiet()
+        check(len(fr) == 1 and fr[0].code() == WHOLE_CODE,
+              "no repeat sequence, %d ms without a hold: one frame (%d)" % (held_ms, len(fr)))
+    # Never released and never held: still the one frame, and the stop is logged as before
+    tx.mark()
+    keys.play([(0, "press", "Whole", "9")])
+    fr = tx.wait_quiet(quiet=0.9)
+    check(len(fr) == 1, "no repeat sequence, press only: one frame (%d)" % len(fr))
 
     tx.mark()
     keys.play([(0, "press", "Nec", "9"), (300, "hold", "Nec", "9"), (600, "hold", "Nec", "9"), (800, "release", "Nec", "9")])

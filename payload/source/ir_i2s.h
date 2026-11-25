@@ -51,6 +51,14 @@ int ir_i2s_blast_blob(const uint8_t *blob, size_t blob_len, uint8_t port_mask);
 int ir_i2s_blast_blob_part(const uint8_t *blob, size_t blob_len, int part, uint8_t port_mask);
 
 /**
+ * Whether a held key's repeat is the code's whole frame again (the header's repeat location is
+ * its start location, or it has none), not a repeat sequence of its own such as the NEC repeat
+ * code. On a protocol without a toggle bit the receiver cannot tell such a frame from a second
+ * press.
+ */
+int ir_i2s_blob_repeats_whole_frame(const uint8_t *blob, size_t blob_len);
+
+/**
  * Marks a held key from its first frame to its last (on 1, then 0): the capture mode treats
  * the whole time as one send. Calls nest with the marks of the frames themselves.
  */

@@ -33,6 +33,15 @@
  * start sequence is out, so a quick tap still sends what a tap sends. The command lock is not
  * held while it plays, so the release gets in.
  *
+ * A code whose repeat is its whole frame again (ir_i2s_blob_repeats_whole_frame) repeats only
+ * once the first hold has come, which is the remote's word that the key really is held (350 ms
+ * after the press, rf_keymap.c). Until then the frame of the press is all that goes out. Sent
+ * back to back from the press, a press of 160 to 270 ms was two frames and one of 330 ms three,
+ * and a Sky Q box ("Sky 28 Bit", no toggle bit) took the second or third frame for a second
+ * press: measured on 2026-11-25 with ChannelUp, one frame never moved two channels, two frames
+ * did once in nine, three or more in five of six. A code with a repeat sequence of its own (the
+ * NEC repeat code, a Sony frame) says "still down" by it and repeats from the press as before.
+ *
  * No condition variables: the Hub's kernel has no futex system call, so pthread_cond_wait()
  * returns at once and a thread waiting on one spins at full CPU. The player sleeps in poll()
  * on a pipe instead, and a caller waiting for the player to finish checks every few ms.
@@ -44,12 +53,13 @@ static struct {
     int thread_up;
     int active;             /* a key is handed over and has not ended */
     int stop;               /* it ends after the frame on air */
+    int held;               /* a hold came for it: the remote says the key is held */
     uint64_t deadline_ms;   /* it ends when no hold came by then */
     char key[200];          /* "<device id>/<command>" */
     uint8_t *blob;
     size_t blob_len;
     uint8_t ports;
-} s_ir_hold = { PTHREAD_MUTEX_INITIALIZER, -1, -1, 0, 0, 0, 0, {0}, NULL, 0, 0 };
+} s_ir_hold = { PTHREAD_MUTEX_INITIALIZER, -1, -1, 0, 0, 0, 0, 0, {0}, NULL, 0, 0 };
 
 static uint64_t ir_hold_now_ms(void) {
     struct timespec ts;
@@ -94,14 +104,22 @@ static void *ir_hold_thread(void *arg) {
         /* one send for the capture mode, from the first frame to the last */
         ir_i2s_tx_hold(1);
         int part = IR_BLOB_START, frames = 0, rc, timed_out = 0;
+        int wait_for_hold = ir_i2s_blob_repeats_whole_frame(blob, blob_len);
         for (;;) {
             rc = ir_i2s_blast_blob_part(blob, blob_len, part, ports);
             if (rc != 0) break;
             frames++;
-            pthread_mutex_lock(&s_ir_hold.lock);
-            int stop = s_ir_hold.stop;
-            if (!stop && ir_hold_now_ms() >= s_ir_hold.deadline_ms) timed_out = 1;
-            pthread_mutex_unlock(&s_ir_hold.lock);
+            int stop;
+            for (;;) {
+                pthread_mutex_lock(&s_ir_hold.lock);
+                stop = s_ir_hold.stop;
+                int held = s_ir_hold.held;
+                if (!stop && ir_hold_now_ms() >= s_ir_hold.deadline_ms) timed_out = 1;
+                pthread_mutex_unlock(&s_ir_hold.lock);
+                /* a whole-frame code is quiet after the press until its first hold */
+                if (stop || timed_out || held || !wait_for_hold) break;
+                usleep(IR_HOLD_IDLE_POLL_US);
+            }
             if (stop || timed_out) break;
             part = IR_BLOB_REPEAT;
         }
@@ -114,6 +132,8 @@ static void *ir_hold_thread(void *arg) {
         } else if (timed_out) {
             printf("[*] IR held key %s: no hold or release for %d ms, stopped after %d frame(s)\n",
                    s_ir_hold.key, HW_IR_HOLD_DEADLINE_MS, frames);
+        } else if (frames > 1) {
+            printf("[*] IR held key %s: %d frame(s)\n", s_ir_hold.key, frames);
         }
         ir_free_encoded(blob);
         s_ir_hold.blob = NULL;
@@ -167,6 +187,7 @@ static int ir_hold_press(const char *key, uint8_t *blob, size_t blob_len, uint8_
     s_ir_hold.ports = ports;
     s_ir_hold.deadline_ms = ir_hold_now_ms() + HW_IR_HOLD_DEADLINE_MS;
     s_ir_hold.stop = 0;
+    s_ir_hold.held = 0;
     s_ir_hold.active = 1;
     if (write(s_ir_hold.wake_wr, "k", 1) < 0) { /* full pipe: a byte is already waiting */ }
     pthread_mutex_unlock(&s_ir_hold.lock);
@@ -179,6 +200,7 @@ static void ir_hold_heartbeat(const char *key) {
     pthread_mutex_lock(&s_ir_hold.lock);
     if (s_ir_hold.active && !s_ir_hold.stop && key && strcmp(s_ir_hold.key, key) == 0) {
         s_ir_hold.deadline_ms = ir_hold_now_ms() + HW_IR_HOLD_DEADLINE_MS;
+        s_ir_hold.held = 1;
     }
     pthread_mutex_unlock(&s_ir_hold.lock);
 }

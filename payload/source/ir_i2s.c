@@ -360,6 +360,14 @@ int ir_i2s_blast_blob(const uint8_t *blob, size_t blob_len, uint8_t port_mask) {
     return ir_i2s_blast_blob_sequence(blob, blob_len, ir_blob_start_loc(blob, blob_len), 0, port_mask);
 }
 
+int ir_i2s_blob_repeats_whole_frame(const uint8_t *blob, size_t blob_len) {
+    if (!blob || blob_len < 16) return 1;
+    uint16_t repeat_loc = ((uint16_t)blob[12] << 8) | (uint16_t)blob[13];
+    /* the same test as IR_BLOB_REPEAT below: without a repeat sequence the start one repeats */
+    if (repeat_loc < 16 || (size_t)repeat_loc + 4 > blob_len || (!blob[repeat_loc] && !blob[repeat_loc + 1])) return 1;
+    return repeat_loc == ir_blob_start_loc(blob, blob_len);
+}
+
 int ir_i2s_blast_blob_part(const uint8_t *blob, size_t blob_len, int part, uint8_t port_mask) {
     if (!blob || blob_len < 16) return -1;
     uint16_t loc = ir_blob_start_loc(blob, blob_len);
